@@ -116,6 +116,10 @@ const SCALES = [
 const MOOD_TYPES = new Set(['mood','wakeup','getup','bedtime']);
 const DUR_TYPES = new Set(['gaming','exercise','work']);
 
+  window.onerror = function (msg, url, line, col, error) {
+  document.body.innerHTML = "JS Error: " + msg;
+};
+
 // ── IndexedDB ───────────────────────────────────────────────────────────
 const DB_NAME = 'lifetracker';
 const DB_VER = 2;
