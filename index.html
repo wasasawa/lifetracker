@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<title>Life Tracker</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{--bg:#0a0a0a;--card:#111;--card2:#1a1a1a;--border:#1a1a1a;--text:#e5e5e5;--muted:#888;--dim:#555;--red:#ef4444;--green:#22c55e;--amber:#f59e0b;--blue:#3b82f6;--purple:#8b5cf6;--pink:#ec4899}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,'Segoe UI',sans-serif;overflow-x:hidden}
+body{max-width:480px;margin:0 auto;padding-bottom:env(safe-area-inset-bottom)}
+input,button,select,textarea{font-family:inherit}
+
+.header{position:sticky;top:0;background:var(--bg);z-index:10;padding:12px 16px 0}
+.tabs{display:flex;background:var(--card2);border-radius:10px;padding:3px;margin-bottom:10px}
+.tab{flex:1;padding:7px 0;border:none;border-radius:8px;background:transparent;color:var(--dim);font-size:13px;font-weight:600;cursor:pointer}
+.tab.active{background:#333;color:#fff}
+.daynav{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.daynav button{width:40px;height:40px;border-radius:10px;border:none;background:var(--card2);color:var(--muted);font-size:20px;cursor:pointer}
+.daynav button:disabled{opacity:.3}
+.daytext{text-align:center}
+.daytext h2{font-size:16px;font-weight:700}
+.daytext small{font-size:11px;color:var(--dim)}
+.counters{display:flex;gap:8px;padding:8px 12px;background:var(--card);border-radius:10px;margin-bottom:12px;justify-content:space-around}
+.counter{text-align:center}
+.counter .num{font-size:18px}
+.counter .num span{font-weight:700}
+.counter .lbl{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.zero{color:#333}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px;margin-bottom:16px}
+.gbtn{display:flex;align-items:center;justify-content:center;gap:5px;padding:14px 8px;border-radius:12px;border:1px solid #222;background:var(--card);color:#ccc;font-size:13px;font-weight:500;cursor:pointer;transition:transform .1s;-webkit-user-select:none;user-select:none}
+.gbtn:active{transform:scale(.95)}
+
+.timeline{padding:0 16px}
+.tlabel{font-size:12px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.empty{text-align:center;padding:40px 20px;color:#333;font-size:14px}
+.entry{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);align-items:flex-start}
+.entry .time{font-size:12px;color:var(--muted);min-width:42px;font-family:monospace;font-weight:500;padding-top:2px}
+.entry .body{flex:1;min-width:0}
+.entry .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;display:inline-block}
+.entry .details{font-size:13px;color:#aaa;margin-top:3px;line-height:1.3}
+.entry .dur{font-size:11px;color:var(--dim);margin-top:2px}
+.entry .scales{display:flex;gap:5px;margin-top:4px;flex-wrap:wrap}
+.entry .sc{font-size:10px;padding:1px 6px;border-radius:4px}
+.entry .del{background:none;border:none;color:#333;font-size:16px;cursor:pointer;padding:2px 4px}
+.entry .del:hover{color:var(--red)}
+
+.statslist{padding:0 16px}
+.statday{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;margin-bottom:6px;background:var(--card);border:1px solid var(--border);border-radius:10px;cursor:pointer;color:#ccc;width:100%;border:none;text-align:left;font-family:inherit}
+.statday:active{background:var(--card2)}
+.statday .right{display:flex;gap:10px;align-items:center;font-size:12px}
+.statday .moodpill{font-size:12px;padding:2px 8px;border-radius:6px}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:flex-end;justify-content:center;z-index:100}
+.modal{background:#151515;border-radius:20px 20px 0 0;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;padding:20px 20px 32px;padding-bottom:calc(32px + env(safe-area-inset-bottom))}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.modal-head .title{font-size:16px;font-weight:700}
+.modal-head button{width:32px;height:32px;border-radius:8px;background:#222;border:none;color:var(--muted);font-size:18px;cursor:pointer}
+.field{margin-bottom:14px}
+.field label{font-size:11px;color:var(--dim);display:block;margin-bottom:4px}
+.field input,.field textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #333;background:var(--card2);color:#fff;font-size:14px}
+.field input[type=time]{font-size:16px}
+
+.scale{margin-bottom:10px}
+.scale .row{display:flex;justify-content:space-between;font-size:11px;color:#666;margin-bottom:3px}
+.scale .row .name{font-weight:600;color:#aaa}
+.scale .btns{display:flex;gap:6px;justify-content:center}
+.scale .btns button{width:44px;height:44px;border-radius:10px;border:none;font-size:16px;font-weight:700;cursor:pointer;transition:all .12s}
+
+.submit{width:100%;padding:14px;border-radius:12px;border:none;color:#fff;font-size:16px;font-weight:700;cursor:pointer;margin-top:4px}
+details{margin-bottom:8px}
+summary{font-size:12px;color:var(--dim);cursor:pointer;margin-bottom:8px}
+
+.export-btn{padding:6px 12px;border-radius:8px;border:1px solid #333;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+.hdr-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────
+const TYPES = [
+  {id:'cig',label:'🚬 Cigarette',color:'#ef4444',cat:'smoke',quick:true},
+  {id:'joint',label:'🌿 Joint',color:'#22c55e',cat:'smoke',quick:true},
+  {id:'wakeup',label:'☀️ Wake Up',color:'#fbbf24',cat:'sleep'},
+  {id:'getup',label:'🛏️ Get Up',color:'#fb923c',cat:'sleep'},
+  {id:'breakfast',label:'🍳 Breakfast',color:'#f59e0b',cat:'meal'},
+  {id:'lunch',label:'🍽️ Lunch',color:'#f59e0b',cat:'meal'},
+  {id:'dinner',label:'🌙 Dinner',color:'#f59e0b',cat:'meal'},
+  {id:'snack',label:'🍿 Snack',color:'#f59e0b',cat:'meal'},
+  {id:'water',label:'💧 Water',color:'#3b82f6',cat:'health',quick:true},
+  {id:'gaming',label:'🎮 Gaming',color:'#8b5cf6',cat:'activity'},
+  {id:'exercise',label:'💪 Exercise',color:'#10b981',cat:'activity'},
+  {id:'work',label:'📚 Work/Study',color:'#6366f1',cat:'activity'},
+  {id:'mood',label:'🧠 Mood Check',color:'#ec4899',cat:'mood'},
+  {id:'bedtime',label:'😴 Bedtime',color:'#6b7280',cat:'sleep'},
+  {id:'note',label:'📝 Note',color:'#78716c',cat:'other'},
+];
+
+const SCALES = [
+  {key:'mood',label:'Mood',low:'terrible',high:'great'},
+  {key:'energy',label:'Energy',low:'dead',high:'wired'},
+  {key:'stress',label:'Stress',low:'stressed',high:'calm'},
+  {key:'irritability',label:'Irritab.',low:'annoyed',high:'zen'},
+  {key:'rumination',label:'Spiraling',low:'looping',high:'clear'},
+];
+
+const MOOD_TYPES = new Set(['mood','wakeup','getup','bedtime']);
+const DUR_TYPES = new Set(['gaming','exercise','work']);
+
+// ── IndexedDB ───────────────────────────────────────────────────────────
+const DB_NAME = 'lifetracker';
+const DB_VER = 1;
+let db = null;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('entries')) {
+        const store = d.createObjectStore('entries', {keyPath:'id'});
+        store.createIndex('day', 'day', {unique:false});
+      }
+    };
+    req.onsuccess = () => { db = req.result; resolve(db); };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function dbAdd(entry) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries','readwrite');
+    tx.objectStore('entries').put(entry);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function dbDelete(id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries','readwrite');
+    tx.objectStore('entries').delete(id);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function dbGetDay(dayStr) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries','readonly');
+    const idx = tx.objectStore('entries').index('day');
+    const req = idx.getAll(dayStr);
+    req.onsuccess = () => resolve(req.result.sort((a,b) => a.ts - b.ts));
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function dbGetAllDays() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries','readonly');
+    const req = tx.objectStore('entries').index('day').openKeyCursor(null,'nextunique');
+    const days = [];
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor) { days.push(cursor.key); cursor.continue(); }
+      else resolve(days.sort().reverse());
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function dbGetAll() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('entries','readonly');
+    const req = tx.objectStore('entries').getAll();
+    req.onsuccess = () => resolve(req.result.sort((a,b) => a.ts - b.ts));
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+const pad = n => String(n).padStart(2,'0');
+const dayStr = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const today = () => dayStr(new Date());
+const fmtTime = ts => { const d=new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const fmtDay = s => {
+  const d=new Date(s+'T12:00:00');
+  const dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${dn[d.getDay()]} ${d.getDate()} ${mn[d.getMonth()]}`;
+};
+const typeOf = id => TYPES.find(t=>t.id===id) || TYPES[TYPES.length-1];
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+
+function offsetDay(s, n) {
+  const d = new Date(s+'T12:00:00');
+  d.setDate(d.getDate()+n);
+  return dayStr(d);
+}
+
+// ── State ───────────────────────────────────────────────────────────────
+let state = {
+  view: 'log',
+  selDay: today(),
+  entries: [],
+  allDays: [],
+  showForm: false,
+  formType: null,
+  formTime: '',
+  formDetails: '',
+  formDuration: '',
+  formMood: {},
+  daysCache: {},
+};
+
+function setState(patch) {
+  Object.assign(state, patch);
+  render();
+}
+
+// ── Actions ─────────────────────────────────────────────────────────────
+async function loadDay(d) {
+  const entries = await dbGetDay(d);
+  state.daysCache[d] = entries;
+  if (d === state.selDay) setState({entries});
+}
+
+async function quickLog(typeId) {
+  const now = new Date();
+  const entry = {id:uid(), type:typeId, ts:now.getTime(), day:dayStr(now), details:'', duration:null};
+  await dbAdd(entry);
+  await refreshAll();
+}
+
+async function openForm(typeId) {
+  const now = new Date();
+  setState({
+    showForm:true, formType:typeId,
+    formTime:`${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    formDetails:'', formDuration:'', formMood:{},
+  });
+}
+
+async function submitForm() {
+  const {formType, formTime, formDetails, formDuration, formMood, selDay} = state;
+  if (!formType) return;
+  const [h,m] = formTime.split(':').map(Number);
+  const d = new Date(selDay+'T12:00:00');
+  d.setHours(h,m,0,0);
+  const entry = {
+    id:uid(), type:formType, ts:d.getTime(), day:selDay,
+    details:formDetails.trim(), duration:formDuration?parseInt(formDuration):null,
+  };
+  SCALES.forEach(s => { if(formMood[s.key]) entry[s.key]=formMood[s.key]; });
+  await dbAdd(entry);
+  setState({showForm:false});
+  await refreshAll();
+}
+
+async function deleteEntry(id) {
+  await dbDelete(id);
+  await refreshAll();
+}
+
+async function refreshAll() {
+  const allDays = await dbGetAllDays();
+  const t = today();
+  if (!allDays.includes(t)) allDays.unshift(t);
+  const entries = await dbGetDay(state.selDay);
+  state.daysCache[state.selDay] = entries;
+  setState({entries, allDays});
+}
+
+async function switchDay(d) {
+  state.selDay = d;
+  const cached = state.daysCache[d];
+  if (cached) setState({entries:cached});
+  else { setState({entries:[]}); await loadDay(d); }
+}
+
+async function exportCSV() {
+  const all = await dbGetAll();
+  const hdr = 'date;time;type;details;duration;mood;energy;stress;irritability;rumination';
+  const rows = all.map(e => {
+    const d = new Date(e.ts);
+    const t = typeOf(e.type);
+    return [
+      `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`,
+      fmtTime(e.ts), t.label.replace(/^.+?\s/,''),
+      `"${(e.details||'').replace(/"/g,'""')}"`,
+      e.duration||'', e.mood||'', e.energy||'', e.stress||'',
+      e.irritability||'', e.rumination||''
+    ].join(';');
+  });
+  const blob = new Blob([hdr+'\n'+rows.join('\n')], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'life_tracker_export.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Render ───────────────────────────────────────────────────────────────
+function render() {
+  const {view, selDay, entries, allDays, showForm, formType} = state;
+  const isToday = selDay === today();
+  const cigs = entries.filter(e=>e.type==='cig').length;
+  const joints = entries.filter(e=>e.type==='joint').length;
+  const meals = entries.filter(e=>['breakfast','lunch','dinner'].includes(e.type)).length;
+  const water = entries.filter(e=>e.type==='water').length;
+
+  let html = `<div class="header">`;
+  // Top row
+  html += `<div class="hdr-row">
+    <div class="tabs" style="flex:1;max-width:200px">
+      <button class="tab ${view==='log'?'active':''}" onclick="setState({view:'log'})">Log</button>
+      <button class="tab ${view==='stats'?'active':''}" onclick="setState({view:'stats'})">Stats</button>
+    </div>
+    <button class="export-btn" onclick="exportCSV()">Export CSV</button>
+  </div>`;
+  // Day nav
+  html += `<div class="daynav">
+    <button onclick="switchDay(offsetDay('${selDay}',-1))">‹</button>
+    <div class="daytext">
+      <h2>${isToday?'Today':fmtDay(selDay)}</h2>
+      ${isToday?`<small>${fmtDay(selDay)}</small>`:''}
+    </div>
+    <button onclick="switchDay(offsetDay('${selDay}',1))" ${isToday?'disabled':''}>›</button>
+  </div>`;
+  // Counters
+  html += `<div class="counters">
+    ${[{i:'🚬',c:cigs,l:'cigs'},{i:'🌿',c:joints,l:'joints'},{i:'🍽️',c:meals,l:'meals'},{i:'💧',c:water,l:'water'}]
+      .map(s=>`<div class="counter"><div class="num">${s.i} <span class="${s.c?'':'zero'}">${s.c}</span></div><div class="lbl">${s.l}</div></div>`).join('')}
+  </div>`;
+  html += `</div>`;
+
+  if (view === 'log') {
+    // Quick buttons
+    html += `<div class="grid">`;
+    TYPES.forEach(t => {
+      html += `<button class="gbtn" onclick="${t.quick?`quickLog('${t.id}')`:`openForm('${t.id}')`}">${t.label}</button>`;
+    });
+    html += `</div>`;
+    // Timeline
+    html += `<div class="timeline"><div class="tlabel">Timeline</div>`;
+    if (entries.length === 0) {
+      html += `<div class="empty">No entries yet. Tap a button above.</div>`;
+    } else {
+      entries.forEach(e => {
+        const t = typeOf(e.type);
+        const hasMood = SCALES.some(s=>e[s.key]);
+        html += `<div class="entry">
+          <div class="time">${fmtTime(e.ts)}</div>
+          <div class="body">
+            <span class="tag" style="color:${t.color};background:${t.color}18">${t.label}</span>
+            ${e.details?`<div class="details">${esc(e.details)}</div>`:''}
+            ${e.duration?`<div class="dur">${e.duration} min</div>`:''}
+            ${hasMood?`<div class="scales">${SCALES.map(s=>e[s.key]?
+              `<span class="sc" style="background:${e[s.key]<=2?'#ef444430':e[s.key]>=4?'#22c55e30':'#f59e0b30'};color:${e[s.key]<=2?'#ef4444':e[s.key]>=4?'#22c55e':'#f59e0b'}">${s.label}: ${e[s.key]}</span>`:'').join('')}</div>`:''}
+          </div>
+          <button class="del" onclick="deleteEntry('${e.id}')">×</button>
+        </div>`;
+      });
+    }
+    html += `</div>`;
+  } else {
+    // Stats view
+    html += `<div class="statslist"><div class="tlabel" style="padding:0 0 8px">Recent Days</div>`;
+    const showDays = allDays.slice(0, 30);
+
+    // We need day data for stats - load from cache
+    showDays.forEach(d => {
+      const dayData = state.daysCache[d] || [];
+      const c = dayData.filter(e=>e.type==='cig').length;
+      const j = dayData.filter(e=>e.type==='joint').length;
+      const moods = dayData.filter(e=>e.mood).map(e=>e.mood);
+      const avg = moods.length ? (moods.reduce((a,b)=>a+b,0)/moods.length).toFixed(1) : null;
+      const moodColor = avg?(avg>=4?'#22c55e':avg<=2?'#ef4444':'#f59e0b'):'';
+      const moodBg = avg?(avg>=4?'#22c55e20':avg<=2?'#ef444420':'#f59e0b20'):'';
+
+      html += `<button class="statday" onclick="switchDay('${d}');setState({view:'log'})">
+        <div>
+          <div style="font-size:14px;font-weight:600">${fmtDay(d)}</div>
+          <div style="font-size:11px;color:var(--dim)">${dayData.length} entries</div>
+        </div>
+        <div class="right">
+          ${c?`<span style="color:var(--red)">🚬${c}</span>`:''}
+          ${j?`<span style="color:var(--green)">🌿${j}</span>`:''}
+          ${avg?`<span class="moodpill" style="background:${moodBg};color:${moodColor}">mood ${avg}</span>`:''}
+        </div>
+      </button>`;
+    });
+    if (!showDays.length) html += `<div class="empty">No data yet. Start logging!</div>`;
+    html += `</div>`;
+  }
+
+  // Modal
+  if (showForm && formType) {
+    const t = typeOf(formType);
+    const needsMood = MOOD_TYPES.has(formType);
+    const needsDur = DUR_TYPES.has(formType);
+    const placeholder = {
+      cig:'Stress, boredom, after meal...', joint:'With friends, winding down...',
+      gaming:'Valorant, LoL...', exercise:'Gym, running...', work:'What you worked on...',
+      mood:"What's on your mind...", note:'Anything...',
+    }[formType] || 'Optional details';
+
+    html += `<div class="modal-bg" onclick="if(event.target===this)setState({showForm:false})">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="title" style="color:${t.color}">${t.label}</span>
+        <button onclick="setState({showForm:false})">×</button>
+      </div>
+      <div class="field">
+        <label>Time</label>
+        <input type="time" id="f-time" value="${state.formTime}" onchange="state.formTime=this.value">
+      </div>
+      <div class="field">
+        <label>Details${formType==='cig'||formType==='joint'?' (trigger?)':''}</label>
+        <input type="text" id="f-details" value="${esc(state.formDetails)}" placeholder="${placeholder}"
+          oninput="state.formDetails=this.value">
+      </div>
+      ${needsDur?`<div class="field">
+        <label>Duration (minutes)</label>
+        <input type="number" id="f-dur" value="${state.formDuration}" placeholder="e.g. 90"
+          oninput="state.formDuration=this.value" inputmode="numeric">
+      </div>`:''}`;
+
+    // Mood scales
+    if (needsMood) {
+      html += renderScales();
+    } else {
+      html += `<details><summary>+ Add mood ratings (optional)</summary>${renderScales()}</details>`;
+    }
+
+    html += `<button class="submit" style="background:${t.color}" onclick="submitForm()">Save</button>
+    </div></div>`;
+  }
+
+  document.getElementById('app').innerHTML = html;
+
+  // Auto-focus details field
+  if (showForm) {
+    const el = document.getElementById('f-details');
+    if (el) setTimeout(()=>el.focus(), 50);
+  }
+
+  // Load uncached stats days
+  if (view === 'stats') {
+    allDays.slice(0,30).forEach(d => {
+      if (!state.daysCache[d]) loadDay(d);
+    });
+  }
+}
+
+function renderScales() {
+  let html = '';
+  SCALES.forEach(s => {
+    const val = state.formMood[s.key] || 0;
+    html += `<div class="scale">
+      <div class="row"><span>${s.low}</span><span class="name">${s.label}</span><span>${s.high}</span></div>
+      <div class="btns">
+        ${[1,2,3,4,5].map(n => {
+          const active = val===n;
+          const bg = active ? (n<=2?'#ef4444':n===3?'#f59e0b':'#22c55e') : '#2a2a2a';
+          const fg = active ? '#fff' : '#666';
+          return `<button style="background:${bg};color:${fg};transform:scale(${active?1.1:1})"
+            onclick="state.formMood.${s.key}=${val===n?0:n};render()">${n}</button>`;
+        }).join('')}
+      </div>
+    </div>`;
+  });
+  return html;
+}
+
+function esc(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Init ────────────────────────────────────────────────────────────────
+(async () => {
+  await openDB();
+  await refreshAll();
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  }
+})();
+</script>
+</body>
+</html>
