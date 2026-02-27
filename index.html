@@ -10,6 +10,7 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
 <title>Life Tracker</title>
 <style>
+/* (same styles as before – no changes needed) */
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{--bg:#0a0a0a;--card:#111;--card2:#1a1a1a;--border:#1a1a1a;--text:#e5e5e5;--muted:#888;--dim:#555;--red:#ef4444;--green:#22c55e;--amber:#f59e0b;--blue:#3b82f6;--purple:#8b5cf6;--pink:#ec4899}
 html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,'Segoe UI',sans-serif;overflow-x:hidden}
@@ -103,6 +104,8 @@ const TYPES = [
   {id:'mood',label:'🧠 Mood Check',color:'#ec4899',cat:'mood'},
   {id:'bedtime',label:'😴 Bedtime',color:'#6b7280',cat:'sleep'},
   {id:'note',label:'📝 Note',color:'#78716c',cat:'other'},
+  {id:'social',label:'👥 Social',color:'#8b5cf6',cat:'social',quick:false},
+  {id:'shower',label:'🚿 Shower',color:'#3b82f6',cat:'health',quick:false}   // new shower type
 ];
 
 const SCALES = [
@@ -113,10 +116,12 @@ const SCALES = [
   {key:'rumination',label:'Spiraling',low:'looping',high:'clear'},
 ];
 
-const MOOD_TYPES = new Set(['mood','wakeup','getup','bedtime']);
+// Mood types include social and shower? For shower, maybe not needed, but we'll include optionally.
+// We'll keep shower out of mood types (no scales by default), but user can add optional scales via details.
+const MOOD_TYPES = new Set(['mood','wakeup','getup','bedtime','social']);  // shower not included
 const DUR_TYPES = new Set(['gaming','exercise','work']);
 
-  window.onerror = function (msg, url, line, col, error) {
+window.onerror = function (msg, url, line, col, error) {
   document.body.innerHTML = "JS Error: " + msg;
 };
 
@@ -127,16 +132,29 @@ let db = null;
 
 function openDB() {
   return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error('IndexedDB is not supported in this browser.'));
+      return;
+    }
     const req = indexedDB.open(DB_NAME, DB_VER);
     req.onupgradeneeded = (e) => {
       const d = e.target.result;
       if (!d.objectStoreNames.contains('entries')) {
         const store = d.createObjectStore('entries', {keyPath:'id'});
         store.createIndex('day', 'day', {unique:false});
+      } else {
+        const tx = e.target.transaction;
+        const store = tx.objectStore('entries');
+        if (!store.indexNames.contains('day')) {
+          store.createIndex('day', 'day', {unique:false});
+        }
       }
     };
     req.onsuccess = () => { db = req.result; resolve(db); };
-    req.onerror = () => reject(req.error);
+    req.onerror = (e) => {
+      console.error('IndexedDB open error:', e.target.error);
+      reject(e.target.error);
+    };
   });
 }
 
@@ -170,15 +188,18 @@ function dbGetDay(dayStr) {
 
 function dbGetAllDays() {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('entries','readonly');
-    const req = tx.objectStore('entries').index('day').openKeyCursor(null,'nextunique');
-    const days = [];
-    req.onsuccess = (e) => {
-      const cursor = e.target.result;
-      if (cursor) { days.push(cursor.key); cursor.continue(); }
-      else resolve(days.sort().reverse());
-    };
-    req.onerror = () => reject(req.error);
+    if (!db) { reject(new Error('Database not open')); return; }
+    try {
+      const tx = db.transaction('entries','readonly');
+      const store = tx.objectStore('entries');
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const entries = req.result;
+        const days = [...new Set(entries.map(e => e.day))].sort().reverse();
+        resolve(days);
+      };
+      req.onerror = (e) => reject(e.target.error);
+    } catch (err) { reject(err); }
   });
 }
 
@@ -297,9 +318,11 @@ async function exportCSV() {
   const rows = all.map(e => {
     const d = new Date(e.ts);
     const t = typeOf(e.type);
+    // Clean type label: remove emoji and space, keep the text
+    let typeClean = t.label.replace(/^[^\w\s]+\s/, ''); // removes emoji and space
     return [
       `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`,
-      fmtTime(e.ts), t.label.replace(/^.+?\s/,''),
+      fmtTime(e.ts), typeClean,
       `"${(e.details||'').replace(/"/g,'""')}"`,
       e.duration||'', e.mood||'', e.energy||'', e.stress||'',
       e.irritability||'', e.rumination||''
@@ -323,7 +346,6 @@ function render() {
   const water = entries.filter(e=>e.type==='water').length;
 
   let html = `<div class="header">`;
-  // Top row
   html += `<div class="hdr-row">
     <div class="tabs" style="flex:1;max-width:200px">
       <button class="tab ${view==='log'?'active':''}" onclick="setState({view:'log'})">Log</button>
@@ -331,7 +353,6 @@ function render() {
     </div>
     <button class="export-btn" onclick="exportCSV()">Export CSV</button>
   </div>`;
-  // Day nav
   html += `<div class="daynav">
     <button onclick="switchDay(offsetDay('${selDay}',-1))">‹</button>
     <div class="daytext">
@@ -340,7 +361,6 @@ function render() {
     </div>
     <button onclick="switchDay(offsetDay('${selDay}',1))" ${isToday?'disabled':''}>›</button>
   </div>`;
-  // Counters
   html += `<div class="counters">
     ${[{i:'🚬',c:cigs,l:'cigs'},{i:'🌿',c:joints,l:'joints'},{i:'🍽️',c:meals,l:'meals'},{i:'💧',c:water,l:'water'}]
       .map(s=>`<div class="counter"><div class="num">${s.i} <span class="${s.c?'':'zero'}">${s.c}</span></div><div class="lbl">${s.l}</div></div>`).join('')}
@@ -348,13 +368,11 @@ function render() {
   html += `</div>`;
 
   if (view === 'log') {
-    // Quick buttons
     html += `<div class="grid">`;
     TYPES.forEach(t => {
       html += `<button class="gbtn" onclick="${t.quick?`quickLog('${t.id}')`:`openForm('${t.id}')`}">${t.label}</button>`;
     });
     html += `</div>`;
-    // Timeline
     html += `<div class="timeline"><div class="tlabel">Timeline</div>`;
     if (entries.length === 0) {
       html += `<div class="empty">No entries yet. Tap a button above.</div>`;
@@ -377,11 +395,8 @@ function render() {
     }
     html += `</div>`;
   } else {
-    // Stats view
     html += `<div class="statslist"><div class="tlabel" style="padding:0 0 8px">Recent Days</div>`;
     const showDays = allDays.slice(0, 30);
-
-    // We need day data for stats - load from cache
     showDays.forEach(d => {
       const dayData = state.daysCache[d] || [];
       const c = dayData.filter(e=>e.type==='cig').length;
@@ -416,6 +431,8 @@ function render() {
       cig:'Stress, boredom, after meal...', joint:'With friends, winding down...',
       gaming:'Valorant, LoL...', exercise:'Gym, running...', work:'What you worked on...',
       mood:"What's on your mind...", note:'Anything...',
+      social:'Names of people you met...',
+      shower:'Optional notes...'   // placeholder for shower
     }[formType] || 'Optional details';
 
     html += `<div class="modal-bg" onclick="if(event.target===this)setState({showForm:false})">
@@ -429,7 +446,7 @@ function render() {
         <input type="time" id="f-time" value="${state.formTime}" onchange="state.formTime=this.value">
       </div>
       <div class="field">
-        <label>Details${formType==='cig'||formType==='joint'?' (trigger?)':''}</label>
+        <label>Details</label>
         <input type="text" id="f-details" value="${esc(state.formDetails)}" placeholder="${placeholder}"
           oninput="state.formDetails=this.value">
       </div>
@@ -439,7 +456,6 @@ function render() {
           oninput="state.formDuration=this.value" inputmode="numeric">
       </div>`:''}`;
 
-    // Mood scales
     if (needsMood) {
       html += renderScales();
     } else {
@@ -452,13 +468,11 @@ function render() {
 
   document.getElementById('app').innerHTML = html;
 
-  // Auto-focus details field
   if (showForm) {
     const el = document.getElementById('f-details');
     if (el) setTimeout(()=>el.focus(), 50);
   }
 
-  // Load uncached stats days
   if (view === 'stats') {
     allDays.slice(0,30).forEach(d => {
       if (!state.daysCache[d]) loadDay(d);
@@ -492,26 +506,19 @@ function esc(s) {
 }
 
 // ── Init ────────────────────────────────────────────────────────────────
-/*
 (async () => {
-  await openDB();
-  await refreshAll();
-  // Register service worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(()=>{});
-  }
-})();*/
-  (async () => {
   try {
     await openDB();
     await refreshAll();
   } catch (e) {
     console.error("DB failed:", e);
-    document.body.innerHTML = "Database failed to open.";
-  }
-
-  if ('serviceWorker' in navigator) {
-    //navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    let message = "Database failed to open.";
+    if (e.name === 'SecurityError' || e.message?.includes('private')) {
+      message = "IndexedDB is not available in private browsing mode. Please disable private browsing.";
+    } else if (e.message) {
+      message = "Database error: " + e.message;
+    }
+    document.body.innerHTML = `<div style="padding:20px;color:white">${message}</div>`;
   }
 })();
 </script>
