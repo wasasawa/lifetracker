@@ -49,6 +49,9 @@ input,button,select,textarea{font-family:inherit}
 .entry .dur{font-size:11px;color:var(--dim);margin-top:2px}
 .entry .scales{display:flex;gap:5px;margin-top:4px;flex-wrap:wrap}
 .entry .sc{font-size:10px;padding:1px 6px;border-radius:4px}
+.entry .actions{display:flex;gap:6px;align-items:center}
+.entry .edit{background:none;border:none;color:#888;font-size:16px;cursor:pointer;padding:2px 4px}
+.entry .edit:hover{color:var(--blue)}
 .entry .del{background:none;border:none;color:#333;font-size:16px;cursor:pointer;padding:2px 4px}
 .entry .del:hover{color:var(--red)}
 
@@ -118,7 +121,9 @@ const TYPES = [
   {id:'note',label:'📝 Note',color:'#78716c',cat:'other'},
   {id:'social',label:'👥 Social',color:'#8b5cf6',cat:'social',quick:false},
   {id:'shower',label:'🚿 Shower',color:'#3b82f6',cat:'health',quick:false},
-  {id:'migraine',label:'🤕 Migraine',color:'#a855f7',cat:'health',quick:false}   // new migraine type
+  {id:'migraine',label:'🤕 Migraine',color:'#a855f7',cat:'health',quick:false},
+  // 🆕 Alcohol type
+  {id:'alcohol',label:'🍺 Alcohol',color:'#f59e0b',cat:'health',quick:false}
 ];
 
 const SCALES = [
@@ -129,7 +134,7 @@ const SCALES = [
   {key:'rumination',label:'Spiraling',low:'looping',high:'clear'},
 ];
 
-const MOOD_TYPES = new Set(['mood','wakeup','getup','bedtime','social']);
+const MOOD_TYPES = new Set(['mood','wakeup','getup','bedtime','social','alcohol']); // alcohol can have mood scales
 const DUR_TYPES = new Set(['gaming','exercise','work']);
 
 window.onerror = function (msg, url, line, col, error) {
@@ -255,7 +260,8 @@ let state = {
   formDetails: '',
   formDuration: '',
   formMood: {},
-  migraineIntensity: 0,   // for migraine-specific intensity
+  migraineIntensity: 0,
+  editingId: null,          // 🆕 ID of entry being edited
   daysCache: {},
 };
 
@@ -273,7 +279,41 @@ async function loadDay(d) {
 
 async function quickLog(typeId) {
   const now = new Date();
-  const entry = {id:uid(), type:typeId, ts:now.getTime(), day:dayStr(now), details:'', duration:null};
+  let ts = now.getTime();
+  const today = dayStr(now);
+
+  // Auto‑spacing only for smoke types (cig, joint)
+  if (typeId === 'cig' || typeId === 'joint') {
+    // Get all smoke entries for today
+    const dayEntries = await dbGetDay(today);
+    const smokeEntries = dayEntries.filter(e => e.type === 'cig' || e.type === 'joint');
+    
+    if (smokeEntries.length > 0) {
+      // Find the latest smoke entry
+      const latest = smokeEntries.reduce((latest, e) => e.ts > latest.ts ? e : latest, smokeEntries[0]);
+      const diff = now.getTime() - latest.ts;
+      
+      // If within 2 minutes (120000 ms), space by 1 hour
+      if (diff < 120000) {
+        const newTs = latest.ts + 3600000; // +1 hour
+        // Check that the new time still falls on the same day (to avoid day‑roll issues)
+        const newDate = new Date(newTs);
+        if (dayStr(newDate) === today) {
+          ts = newTs;
+        }
+        // else keep original ts (current time)
+      }
+    }
+  }
+
+  const entry = {
+    id: uid(),
+    type: typeId,
+    ts: ts,
+    day: dayStr(new Date(ts)), // recompute day from final timestamp
+    details: '',
+    duration: null
+  };
   await dbAdd(entry);
   await refreshAll();
 }
@@ -281,31 +321,55 @@ async function quickLog(typeId) {
 async function openForm(typeId) {
   const now = new Date();
   setState({
-    showForm:true, formType:typeId,
-    formTime:`${pad(now.getHours())}:${pad(now.getMinutes())}`,
-    formDetails:'', formDuration:'', formMood:{},
-    migraineIntensity: 0
+    showForm: true,
+    formType: typeId,
+    formTime: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    formDetails: '',
+    formDuration: '',
+    formMood: {},
+    migraineIntensity: 0,
+    editingId: null
+  });
+}
+
+// 🆕 Open edit modal with existing entry data
+function openEdit(entry) {
+  const t = typeOf(entry.type);
+  const formMood = {};
+  SCALES.forEach(s => { if (entry[s.key]) formMood[s.key] = entry[s.key]; });
+  setState({
+    showForm: true,
+    formType: entry.type,
+    formTime: fmtTime(entry.ts),
+    formDetails: entry.details || '',
+    formDuration: entry.duration ? entry.duration.toString() : '',
+    formMood: formMood,
+    migraineIntensity: (entry.type === 'migraine' && entry.mood) ? entry.mood : 0,
+    editingId: entry.id
   });
 }
 
 async function submitForm() {
-  const {formType, formTime, formDetails, formDuration, formMood, selDay, migraineIntensity} = state;
+  const { formType, formTime, formDetails, formDuration, formMood, selDay, migraineIntensity, editingId } = state;
   if (!formType) return;
   const [h,m] = formTime.split(':').map(Number);
-  const d = new Date(selDay+'T12:00:00');
-  d.setHours(h,m,0,0);
+  const d = new Date(selDay + 'T12:00:00');
+  d.setHours(h, m, 0, 0);
   const entry = {
-    id:uid(), type:formType, ts:d.getTime(), day:selDay,
-    details:formDetails.trim(), duration:formDuration?parseInt(formDuration):null,
+    id: editingId || uid(),          // use existing ID if editing
+    type: formType,
+    ts: d.getTime(),
+    day: selDay,
+    details: formDetails.trim(),
+    duration: formDuration ? parseInt(formDuration) : null,
   };
   if (formType === 'migraine') {
-    // Store intensity in the 'mood' field (1-5)
     entry.mood = migraineIntensity > 0 ? migraineIntensity : null;
   } else {
-    SCALES.forEach(s => { if(formMood[s.key]) entry[s.key]=formMood[s.key]; });
+    SCALES.forEach(s => { if (formMood[s.key]) entry[s.key] = formMood[s.key]; });
   }
   await dbAdd(entry);
-  setState({showForm:false});
+  setState({ showForm: false, editingId: null });
   await refreshAll();
 }
 
@@ -355,7 +419,7 @@ async function exportCSV() {
 
 // ── Render ───────────────────────────────────────────────────────────────
 function render() {
-  const {view, selDay, entries, allDays, showForm, formType, migraineIntensity} = state;
+  const {view, selDay, entries, allDays, showForm, formType, migraineIntensity, formDetails, formTime, formDuration, formMood, editingId} = state;
   const isToday = selDay === today();
   const cigs = entries.filter(e=>e.type==='cig').length;
   const joints = entries.filter(e=>e.type==='joint').length;
@@ -407,7 +471,10 @@ function render() {
             ${hasMood?`<div class="scales">${SCALES.map(s=>e[s.key]?
               `<span class="sc" style="background:${e[s.key]<=2?'#ef444430':e[s.key]>=4?'#22c55e30':'#f59e0b30'};color:${e[s.key]<=2?'#ef4444':e[s.key]>=4?'#22c55e':'#f59e0b'}">${s.label}: ${e[s.key]}</span>`:'').join('')}</div>`:''}
           </div>
-          <button class="del" onclick="deleteEntry('${e.id}')">×</button>
+          <div class="actions">
+            <button class="edit" onclick="openEdit(${JSON.stringify(e).replace(/"/g, '&quot;')})">✎</button>
+            <button class="del" onclick="deleteEntry('${e.id}')">×</button>
+          </div>
         </div>`;
       });
     }
@@ -443,7 +510,7 @@ function render() {
   // Modal
   if (showForm && formType) {
     const t = typeOf(formType);
-    const needsMood = MOOD_TYPES.has(formType) && formType !== 'migraine'; // migraine has its own intensity
+    const needsMood = MOOD_TYPES.has(formType) && formType !== 'migraine';
     const needsDur = DUR_TYPES.has(formType);
     const placeholder = {
       cig:'Stress, boredom, after meal...', joint:'With friends, winding down...',
@@ -451,32 +518,32 @@ function render() {
       mood:"What's on your mind...", note:'Anything...',
       social:'Names of people you met...',
       shower:'Optional notes...',
-      migraine:'What helped? (e.g., "solved by: dark room, ibuprofen")'
+      migraine:'What helped? (e.g., "solved by: dark room, ibuprofen")',
+      alcohol:'What did you drink? (beer, wine, amount...)'
     }[formType] || 'Optional details';
 
-    html += `<div class="modal-bg" onclick="if(event.target===this)setState({showForm:false})">
+    html += `<div class="modal-bg" onclick="if(event.target===this)setState({showForm:false, editingId:null})">
     <div class="modal">
       <div class="modal-head">
-        <span class="title" style="color:${t.color}">${t.label}</span>
-        <button onclick="setState({showForm:false})">×</button>
+        <span class="title" style="color:${t.color}">${t.label} ${editingId ? '(edit)' : ''}</span>
+        <button onclick="setState({showForm:false, editingId:null})">×</button>
       </div>
       <div class="field">
         <label>Time</label>
-        <input type="time" id="f-time" value="${state.formTime}" onchange="state.formTime=this.value">
+        <input type="time" id="f-time" value="${formTime}" onchange="state.formTime=this.value">
       </div>
       <div class="field">
         <label>Details</label>
-        <input type="text" id="f-details" value="${esc(state.formDetails)}" placeholder="${placeholder}"
+        <input type="text" id="f-details" value="${esc(formDetails)}" placeholder="${placeholder}"
           oninput="state.formDetails=this.value">
       </div>
       ${needsDur?`<div class="field">
         <label>Duration (minutes)</label>
-        <input type="number" id="f-dur" value="${state.formDuration}" placeholder="e.g. 90"
+        <input type="number" id="f-dur" value="${formDuration}" placeholder="e.g. 90"
           oninput="state.formDuration=this.value" inputmode="numeric">
       </div>`:''}`;
 
     if (formType === 'migraine') {
-      // Custom intensity scale for migraine
       html += `<div class="intensity-scale">
         <div class="label">Intensity (1 = mild, 5 = severe)</div>
         <div class="intensity-btns">
