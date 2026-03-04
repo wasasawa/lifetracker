@@ -280,12 +280,12 @@ async function loadDay(d) {
 async function quickLog(typeId) {
   const now = new Date();
   let ts = now.getTime();
-  const todayStr = dayStr(now);
+  const today = dayStr(now);
 
   // Auto‑spacing only for smoke types (cig, joint)
   if (typeId === 'cig' || typeId === 'joint') {
     // Get all smoke entries for today
-    const dayEntries = await dbGetDay(todayStr);
+    const dayEntries = await dbGetDay(today);
     const smokeEntries = dayEntries.filter(e => e.type === 'cig' || e.type === 'joint');
     
     if (smokeEntries.length > 0) {
@@ -293,30 +293,18 @@ async function quickLog(typeId) {
       const latest = smokeEntries.reduce((latest, e) => e.ts > latest.ts ? e : latest, smokeEntries[0]);
       const diff = now.getTime() - latest.ts;
       
-      // If within 2 minutes, place the new one 1 hour BEFORE the latest
+      // If within 2 minutes (120000 ms), space by 1 hour
       if (diff < 120000) {
-        const newTs = latest.ts - 3600000; // -1 hour
+        const newTs = latest.ts + 3600000; // +1 hour
+        // Check that the new time still falls on the same day (to avoid day‑roll issues)
         const newDate = new Date(newTs);
-        // Ensure it's still the same day (don't cross midnight backwards)
-        if (dayStr(newDate) === todayStr) {
+        if (dayStr(newDate) === today) {
           ts = newTs;
         }
         // else keep original ts (current time)
       }
     }
   }
-
-  const entry = {
-    id: uid(),
-    type: typeId,
-    ts: ts,
-    day: dayStr(new Date(ts)),
-    details: '',
-    duration: null
-  };
-  await dbAdd(entry);
-  await refreshAll();
-}
 
   const entry = {
     id: uid(),
