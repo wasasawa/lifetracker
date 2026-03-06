@@ -173,13 +173,19 @@ function offsetDay(s, n) {
   return getDayFromDate(d);
 }
 
-// Count missing essential entries for a given day's entries
 function countMissingEssential(entries) {
   let missing = 0;
   for (let type of ESSENTIAL_TYPES) {
-    if (!entries.some(e => e.type === type)) missing++;
+    if (!hasEntryOrSkip(entries, type)) missing++;
   }
   return missing;
+}
+
+  function hasEntryOrSkip(entries, typeId) {
+  // Direct entry of the required type
+  if (entries.some(e => e.type === typeId)) return true;
+  // Note that explicitly says "skipped: typeId"
+  return entries.some(e => e.type === 'note' && e.details && e.details.includes(`skipped: ${typeId}`));
 }
 
 // ── IndexedDB ───────────────────────────────────────────────────────────
@@ -636,13 +642,12 @@ async function logSkipped(typeId) {
   const targetDay = state.selDay;
   const now = new Date();
   const targetDate = new Date(targetDay + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':00');
-  const typeName = typeOf(typeId).label.replace(/^[^\w\s]+\s/, ''); // e.g., "Breakfast"
   const entry = {
     id: uid(),
     type: 'note',
     ts: targetDate.getTime(),
-    day: getDayFromDate(targetDate),
-    details: `skipped: ${typeName}`,
+    day: targetDay,                      // use the day you're viewing, don't recompute
+    details: `skipped: ${typeId}`,        // store the type ID, e.g., "skipped: breakfast"
     duration: null
   };
   await dbAdd(entry);
