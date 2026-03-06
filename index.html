@@ -477,18 +477,24 @@ function render() {
   if (view === 'log') {
     // Missing essentials bar
     const missingTypes = [];
-    ESSENTIAL_TYPES.forEach(typeId => {
-      if (!entries.some(e => e.type === typeId)) {
-        const t = typeOf(typeId);
-        missingTypes.push(`<button class="gbtn" style="padding:8px; font-size:12px; background:var(--card2); border-color:#333;" onclick="openForm('${typeId}')">${t.label} +</button>`);
-      }
-    });
-    if (missingTypes.length > 0) {
-      html += `<div style="padding:8px 16px; background:rgba(239,68,68,0.1); margin-bottom:8px; border-radius:8px;">`;
-      html += `<div style="font-size:11px; color:var(--red); margin-bottom:6px;">⚠️ Missing essential entries</div>`;
-      html += `<div style="display:flex; gap:6px; flex-wrap:wrap;">${missingTypes.join('')}</div>`;
-      html += `</div>`;
-    }
+ESSENTIAL_TYPES.forEach(typeId => {
+  if (!entries.some(e => e.type === typeId)) {
+    const t = typeOf(typeId);
+    missingTypes.push(`
+      <div style="display:flex; gap:4px; align-items:center; background:var(--card2); border-radius:8px; padding:2px;">
+        <span style="font-size:12px; color:#ccc; margin-left:6px;">${t.label}</span>
+        <button class="gbtn" style="padding:6px 10px; font-size:14px; background:var(--card); border-color:#333; min-width:40px;" onclick="openForm('${typeId}')">+</button>
+        <button class="gbtn" style="padding:6px 10px; font-size:14px; background:var(--card); border-color:#333; color:var(--dim); min-width:40px;" onclick="logSkipped('${typeId}')">✕</button>
+      </div>
+    `);
+  }
+});
+if (missingTypes.length > 0) {
+  html += `<div style="padding:8px 16px; background:rgba(239,68,68,0.1); margin-bottom:8px; border-radius:8px;">`;
+  html += `<div style="font-size:11px; color:var(--red); margin-bottom:6px;">⚠️ Missing essentials — tap + to add, ✕ to skip</div>`;
+  html += `<div style="display:flex; gap:8px; flex-wrap:wrap;">${missingTypes.join('')}</div>`;
+  html += `</div>`;
+}
 
     html += `<div class="grid">`;
     TYPES.forEach(t => {
@@ -621,6 +627,23 @@ function render() {
       if (!state.daysCache[d]) loadDay(d);
     });
   }
+}
+
+async function logSkipped(typeId) {
+  const targetDay = state.selDay;
+  const now = new Date();
+  const targetDate = new Date(targetDay + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':00');
+  const typeName = typeOf(typeId).label.replace(/^[^\w\s]+\s/, ''); // e.g., "Breakfast"
+  const entry = {
+    id: uid(),
+    type: 'note',
+    ts: targetDate.getTime(),
+    day: getDayFromDate(targetDate),
+    details: `skipped: ${typeName}`,
+    duration: null
+  };
+  await dbAdd(entry);
+  await refreshAll();
 }
 
 function renderScales() {
