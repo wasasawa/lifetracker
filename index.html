@@ -371,12 +371,13 @@ function openEdit(entry) {
     formDuration: entry.duration ? entry.duration.toString() : '',
     formMood: formMood,
     migraineIntensity: (entry.type === 'migraine' && entry.mood) ? entry.mood : 0,
-    editingId: entry.id
+    editingId: entry.id,
+    originalEntryDay: entry.day   // <-- store the original day
   });
 }
 
 async function submitForm() {
-  const { formType, formTime, formDetails, formDuration, formMood, selDay, migraineIntensity, editingId } = state;
+  const { formType, formTime, formDetails, formDuration, formMood, selDay, migraineIntensity, editingId, originalEntryDay } = state;
   if (!formType) return;
   const [h,m] = formTime.split(':').map(Number);
   const d = new Date(selDay + 'T12:00:00');
@@ -385,7 +386,9 @@ async function submitForm() {
     id: editingId || uid(),
     type: formType,
     ts: d.getTime(),
-    day: getDayFromDate(d),
+    // For new entries: use the currently viewed day (selDay)
+    // For edits: keep the original day (so the entry doesn't jump dates)
+    day: editingId ? originalEntryDay : selDay,
     details: formDetails.trim(),
     duration: formDuration ? parseInt(formDuration) : null,
   };
@@ -395,7 +398,7 @@ async function submitForm() {
     SCALES.forEach(s => { if (formMood[s.key]) entry[s.key] = formMood[s.key]; });
   }
   await dbAdd(entry);
-  setState({ showForm: false, editingId: null });
+  setState({ showForm: false, editingId: null, originalEntryDay: null });
   await refreshAll();
 }
 
