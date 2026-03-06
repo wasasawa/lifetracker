@@ -173,19 +173,20 @@ function offsetDay(s, n) {
   return getDayFromDate(d);
 }
 
+// Check if a day has an entry of the required type, or a note saying it was skipped
+function hasEntryOrSkip(entries, typeId) {
+  // Direct entry of the required type
+  if (entries.some(e => e.type === typeId)) return true;
+  // Note that explicitly says "skipped: typeId"
+  return entries.some(e => e.type === 'note' && e.details && e.details.includes(`skipped: ${typeId}`));
+}
+
 function countMissingEssential(entries) {
   let missing = 0;
   for (let type of ESSENTIAL_TYPES) {
     if (!hasEntryOrSkip(entries, type)) missing++;
   }
   return missing;
-}
-
-  function hasEntryOrSkip(entries, typeId) {
-  // Direct entry of the required type
-  if (entries.some(e => e.type === typeId)) return true;
-  // Note that explicitly says "skipped: typeId"
-  return entries.some(e => e.type === 'note' && e.details && e.details.includes(`skipped: ${typeId}`));
 }
 
 // ── IndexedDB ───────────────────────────────────────────────────────────
@@ -289,6 +290,7 @@ let state = {
   formMood: {},
   migraineIntensity: 0,
   editingId: null,
+  originalEntryDay: null,
   daysCache: {},
 };
 
@@ -341,7 +343,7 @@ async function quickLog(typeId) {
     id: uid(),
     type: typeId,
     ts: ts,
-    day: getDayFromDate(new Date(ts)),
+    day: targetDay,                     // <-- keep on the selected day
     details: '',
     duration: null
   };
@@ -378,7 +380,7 @@ function openEdit(entry) {
     formMood: formMood,
     migraineIntensity: (entry.type === 'migraine' && entry.mood) ? entry.mood : 0,
     editingId: entry.id,
-    originalEntryDay: entry.day   // <-- store the original day
+    originalEntryDay: entry.day   // preserve original day
   });
 }
 
@@ -484,26 +486,26 @@ function render() {
   html += `</div>`;
 
   if (view === 'log') {
-    // Missing essentials bar
+    // Missing essentials bar – now uses hasEntryOrSkip so skipped items disappear
     const missingTypes = [];
-ESSENTIAL_TYPES.forEach(typeId => {
-  if (!entries.some(e => e.type === typeId)) {
-    const t = typeOf(typeId);
-    missingTypes.push(`
-      <div style="display:flex; gap:4px; align-items:center; background:var(--card2); border-radius:8px; padding:2px;">
-        <span style="font-size:12px; color:#ccc; margin-left:6px;">${t.label}</span>
-        <button class="gbtn" style="padding:6px 10px; font-size:14px; background:var(--card); border-color:#333; min-width:40px;" onclick="openForm('${typeId}')">+</button>
-        <button class="gbtn" style="padding:6px 10px; font-size:14px; background:var(--card); border-color:#333; color:var(--dim); min-width:40px;" onclick="logSkipped('${typeId}')">✕</button>
-      </div>
-    `);
-  }
-});
-if (missingTypes.length > 0) {
-  html += `<div style="padding:8px 16px; background:rgba(239,68,68,0.1); margin-bottom:8px; border-radius:8px;">`;
-  html += `<div style="font-size:11px; color:var(--red); margin-bottom:6px;">⚠️ Missing essentials — tap + to add, ✕ to skip</div>`;
-  html += `<div style="display:flex; gap:8px; flex-wrap:wrap;">${missingTypes.join('')}</div>`;
-  html += `</div>`;
-}
+    ESSENTIAL_TYPES.forEach(typeId => {
+      if (!hasEntryOrSkip(entries, typeId)) {
+        const t = typeOf(typeId);
+        missingTypes.push(`
+          <div style="display:flex; gap:4px; align-items:center; background:var(--card2); border-radius:8px; padding:2px;">
+            <span style="font-size:12px; color:#ccc; margin-left:6px;">${t.label}</span>
+            <button class="gbtn" style="padding:6px 10px; font-size:14px; background:var(--card); border-color:#333; min-width:40px;" onclick="openForm('${typeId}')">+</button>
+            <button class="gbtn" style="padding:6px 10px; font-size:14px; background:var(--card); border-color:#333; color:var(--dim); min-width:40px;" onclick="logSkipped('${typeId}')">✕</button>
+          </div>
+        `);
+      }
+    });
+    if (missingTypes.length > 0) {
+      html += `<div style="padding:8px 16px; background:rgba(239,68,68,0.1); margin-bottom:8px; border-radius:8px;">`;
+      html += `<div style="font-size:11px; color:var(--red); margin-bottom:6px;">⚠️ Missing essentials — tap + to add, ✕ to skip</div>`;
+      html += `<div style="display:flex; gap:8px; flex-wrap:wrap;">${missingTypes.join('')}</div>`;
+      html += `</div>`;
+    }
 
     html += `<div class="grid">`;
     TYPES.forEach(t => {
@@ -646,8 +648,8 @@ async function logSkipped(typeId) {
     id: uid(),
     type: 'note',
     ts: targetDate.getTime(),
-    day: targetDay,                      // use the day you're viewing, don't recompute
-    details: `skipped: ${typeId}`,        // store the type ID, e.g., "skipped: breakfast"
+    day: targetDay,                      // use the day you're viewing
+    details: `skipped: ${typeId}`,        // store the type ID
     duration: null
   };
   await dbAdd(entry);
