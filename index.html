@@ -18,9 +18,14 @@ input,button,select,textarea{font-family:inherit}
 
 /* Fixed header padding for iOS safe area */
 .header{position:sticky;top:0;background:var(--bg);z-index:10;padding:max(12px, env(safe-area-inset-top)) 16px 0}
-.tabs{display:flex;background:var(--card2);border-radius:10px;padding:3px;margin-bottom:10px}
+.top-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.tabs{display:flex;background:var(--card2);border-radius:10px;padding:3px;flex:1;max-width:200px}
 .tab{flex:1;padding:7px 0;border:none;border-radius:8px;background:transparent;color:var(--dim);font-size:13px;font-weight:600;cursor:pointer}
 .tab.active{background:#333;color:#fff}
+.streak{display:flex;align-items:center;gap:4px;background:var(--card2);padding:4px 10px;border-radius:20px;font-size:12px;margin-left:8px;white-space:nowrap}
+.streak.fire{color:#f59e0b}
+.streak .best{color:var(--muted);font-size:10px;margin-left:4px}
+.export-btn{padding:6px 12px;border-radius:8px;border:1px solid #333;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
 .daynav{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .daynav button{width:40px;height:40px;border-radius:10px;border:none;background:var(--card2);color:var(--muted);font-size:20px;cursor:pointer}
 .daynav button:disabled{opacity:.3}
@@ -37,6 +42,7 @@ input,button,select,textarea{font-family:inherit}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 16px;margin-bottom:16px}
 .gbtn{display:flex;align-items:center;justify-content:center;gap:5px;padding:14px 8px;border-radius:12px;border:1px solid #222;background:var(--card);color:#ccc;font-size:13px;font-weight:500;cursor:pointer;transition:transform .1s;-webkit-user-select:none;user-select:none}
 .gbtn:active{transform:scale(.95)}
+.gbtn.small{padding:8px 12px;font-size:12px}
 
 .timeline{padding:0 16px}
 .tlabel{font-size:12px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
@@ -93,8 +99,14 @@ input,button,select,textarea{font-family:inherit}
 details{margin-bottom:8px}
 summary{font-size:12px;color:var(--dim);cursor:pointer;margin-bottom:8px}
 
-.export-btn{padding:6px 12px;border-radius:8px;border:1px solid #333;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
-.hdr-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+/* Day note section */
+.day-note{margin:16px;padding:12px;background:var(--card);border-radius:12px}
+.day-note textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #333;background:var(--card2);color:#fff;font-size:14px;resize:vertical;min-height:60px}
+.day-note button{margin-top:8px;padding:8px 16px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-size:14px;cursor:pointer}
+
+/* Mood summary dots */
+.mood-summary{display:flex;gap:4px;margin:8px 0;flex-wrap:wrap}
+.mood-dot{width:24px;height:24px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff}
 </style>
 </head>
 <body>
@@ -158,6 +170,7 @@ function getDayFromDate(date) {
 
 const today = () => getDayFromDate(new Date());
 const fmtTime = ts => { const d=new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const fmtTimeFromHourMin = (h, m) => `${pad(h)}:${pad(m)}`;
 const fmtDay = s => {
   const d=new Date(s+'T12:00:00');
   const dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -175,9 +188,7 @@ function offsetDay(s, n) {
 
 // Check if a day has an entry of the required type, or a note saying it was skipped
 function hasEntryOrSkip(entries, typeId) {
-  // Direct entry of the required type
   if (entries.some(e => e.type === typeId)) return true;
-  // Note that explicitly says "skipped: typeId"
   return entries.some(e => e.type === 'note' && e.details && e.details.includes(`skipped: ${typeId}`));
 }
 
@@ -187,6 +198,74 @@ function countMissingEssential(entries) {
     if (!hasEntryOrSkip(entries, type)) missing++;
   }
   return missing;
+}
+
+// ── Streak calculation ───────────────────────────────────────────────────
+async function computeStreak() {
+  const allDays = await dbGetAllDays();
+  const todayStr = today();
+  // Ensure today is in the list
+  if (!allDays.includes(todayStr)) allDays.unshift(todayStr);
+  allDays.sort().reverse(); // descending
+
+  let currentStreak = 0;
+  let bestStreak = 0;
+  let streakBroken = false;
+
+  for (let day of allDays) {
+    const entries = await dbGetDay(day);
+    const complete = countMissingEssential(entries) === 0;
+    if (!streakBroken && complete) {
+      currentStreak++;
+    } else {
+      streakBroken = true;
+      // for best streak, we need to count consecutive from earlier days
+      // simpler: after loop, we'll compute best by scanning again
+    }
+  }
+  // compute best streak by scanning all days
+  let current = 0;
+  for (let day of allDays) {
+    const entries = await dbGetDay(day);
+    if (countMissingEssential(entries) === 0) {
+      current++;
+      if (current > bestStreak) bestStreak = current;
+    } else {
+      current = 0;
+    }
+  }
+  return { current: currentStreak, best: bestStreak };
+}
+
+// ── Smart default times ──────────────────────────────────────────────────
+async function getMedianTimeForType(typeId) {
+  const allEntries = await dbGetAll();
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - 14); // last 14 days
+  const relevant = allEntries.filter(e => e.type === typeId && new Date(e.ts) >= cutoff);
+  if (relevant.length === 0) {
+    // fallback: use any past entries
+    relevant.push(...allEntries.filter(e => e.type === typeId));
+  }
+  if (relevant.length === 0) return null; // no data
+  // extract hour*60+minute
+  const minutes = relevant.map(e => {
+    const d = new Date(e.ts);
+    return d.getHours() * 60 + d.getMinutes();
+  });
+  minutes.sort((a,b) => a-b);
+  const median = minutes[Math.floor(minutes.length/2)];
+  const h = Math.floor(median / 60);
+  const m = median % 60;
+  return { h, m };
+}
+
+// ── Haptic feedback ─────────────────────────────────────────────────────
+function haptic() {
+  if (window.navigator && window.navigator.vibrate) {
+    window.navigator.vibrate(10); // short pulse
+  }
 }
 
 // ── IndexedDB ───────────────────────────────────────────────────────────
@@ -292,6 +371,8 @@ let state = {
   editingId: null,
   originalEntryDay: null,
   daysCache: {},
+  streak: { current: 0, best: 0 },
+  dayNote: '', // for the day note textarea
 };
 
 function setState(patch) {
@@ -303,19 +384,23 @@ function setState(patch) {
 async function loadDay(d) {
   const entries = await dbGetDay(d);
   state.daysCache[d] = entries;
-  if (d === state.selDay) setState({entries});
+  if (d === state.selDay) {
+    // also load day note
+    const dayNoteEntry = entries.find(e => e.type === 'note' && e.details && e.details.startsWith('daynote:'));
+    const dayNote = dayNoteEntry ? dayNoteEntry.details.substring(8) : '';
+    setState({entries, dayNote});
+  }
 }
 
 async function quickLog(typeId) {
+  haptic(); // vibrate on quick log
   const targetDay = state.selDay;
-  // Create a timestamp on targetDay at the current clock time
   const now = new Date();
   const targetDate = new Date(targetDay + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':00');
   let ts = targetDate.getTime();
 
   // Auto‑spacing only for smoke types (cig, joint) – place 1 hour earlier if within 2 minutes of latest smoke
   if (typeId === 'cig' || typeId === 'joint') {
-    // Get entries for the target day (use cache or fetch)
     let dayEntries = state.daysCache[targetDay];
     if (!dayEntries) {
       dayEntries = await dbGetDay(targetDay);
@@ -327,11 +412,9 @@ async function quickLog(typeId) {
       const latest = smokeEntries.reduce((latest, e) => e.ts > latest.ts ? e : latest, smokeEntries[0]);
       const diff = ts - latest.ts;
       
-      // If within 2 minutes, place the new one 1 hour BEFORE the latest
       if (diff < 120000) {
         const newTs = latest.ts - 3600000; // -1 hour
         const newDate = new Date(newTs);
-        // Ensure it's still the same target day (don't cross midnight backwards)
         if (getDayFromDate(newDate) === targetDay) {
           ts = newTs;
         }
@@ -343,7 +426,7 @@ async function quickLog(typeId) {
     id: uid(),
     type: typeId,
     ts: ts,
-    day: targetDay,                     // <-- keep on the selected day
+    day: targetDay,
     details: '',
     duration: null
   };
@@ -354,8 +437,15 @@ async function quickLog(typeId) {
 async function openForm(typeId) {
   const now = new Date();
   const targetDay = state.selDay;
-  // Build a timestamp on targetDay at current time
-  const targetDate = new Date(targetDay + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':00');
+  // Try to get smart default time
+  let defaultHour = now.getHours();
+  let defaultMin = now.getMinutes();
+  const median = await getMedianTimeForType(typeId);
+  if (median) {
+    defaultHour = median.h;
+    defaultMin = median.m;
+  }
+  const targetDate = new Date(targetDay + 'T' + pad(defaultHour) + ':' + pad(defaultMin) + ':00');
   setState({
     showForm: true,
     formType: typeId,
@@ -380,7 +470,7 @@ function openEdit(entry) {
     formMood: formMood,
     migraineIntensity: (entry.type === 'migraine' && entry.mood) ? entry.mood : 0,
     editingId: entry.id,
-    originalEntryDay: entry.day   // preserve original day
+    originalEntryDay: entry.day
   });
 }
 
@@ -394,8 +484,6 @@ async function submitForm() {
     id: editingId || uid(),
     type: formType,
     ts: d.getTime(),
-    // For new entries: use the currently viewed day (selDay)
-    // For edits: keep the original day (so the entry doesn't jump dates)
     day: editingId ? originalEntryDay : selDay,
     details: formDetails.trim(),
     duration: formDuration ? parseInt(formDuration) : null,
@@ -421,14 +509,25 @@ async function refreshAll() {
   if (!allDays.includes(t)) allDays.unshift(t);
   const entries = await dbGetDay(state.selDay);
   state.daysCache[state.selDay] = entries;
-  setState({entries, allDays});
+  // Reload day note
+  const dayNoteEntry = entries.find(e => e.type === 'note' && e.details && e.details.startsWith('daynote:'));
+  const dayNote = dayNoteEntry ? dayNoteEntry.details.substring(8) : '';
+  // Update streak
+  const streak = await computeStreak();
+  setState({entries, allDays, dayNote, streak});
 }
 
 async function switchDay(d) {
   state.selDay = d;
   const cached = state.daysCache[d];
-  if (cached) setState({entries:cached});
-  else { setState({entries:[]}); await loadDay(d); }
+  if (cached) {
+    const dayNoteEntry = cached.find(e => e.type === 'note' && e.details && e.details.startsWith('daynote:'));
+    const dayNote = dayNoteEntry ? dayNoteEntry.details.substring(8) : '';
+    setState({entries:cached, dayNote});
+  } else {
+    setState({entries:[], dayNote:''});
+    await loadDay(d);
+  }
 }
 
 async function exportCSV() {
@@ -437,7 +536,7 @@ async function exportCSV() {
   const rows = all.map(e => {
     const d = new Date(e.ts);
     const t = typeOf(e.type);
-    let typeClean = t.label.replace(/^[^\w\s]+\s/, ''); // removes emoji and space
+    let typeClean = t.label.replace(/^[^\w\s]+\s/, '');
     return [
       `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`,
       fmtTime(e.ts), typeClean,
@@ -454,22 +553,113 @@ async function exportCSV() {
   URL.revokeObjectURL(a.href);
 }
 
+async function saveDayNote() {
+  const { selDay, dayNote } = state;
+  if (!dayNote.trim()) return; // don't save empty note
+  // Look for existing day note entry to replace
+  const entries = await dbGetDay(selDay);
+  const existing = entries.find(e => e.type === 'note' && e.details && e.details.startsWith('daynote:'));
+  if (existing) {
+    existing.details = `daynote: ${dayNote.trim()}`;
+    await dbAdd(existing);
+  } else {
+    const now = new Date();
+    const targetDate = new Date(selDay + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':00');
+    const entry = {
+      id: uid(),
+      type: 'note',
+      ts: targetDate.getTime(),
+      day: selDay,
+      details: `daynote: ${dayNote.trim()}`,
+      duration: null
+    };
+    await dbAdd(entry);
+  }
+  await refreshAll();
+}
+
+// Fill missing modal
+let fillMissingState = { show: false, items: [] };
+function openFillMissing() {
+  const missing = [];
+  ESSENTIAL_TYPES.forEach(typeId => {
+    if (!hasEntryOrSkip(state.entries, typeId)) {
+      missing.push({ typeId, selected: true });
+    }
+  });
+  if (missing.length === 0) {
+    alert('No missing essentials for this day!');
+    return;
+  }
+  fillMissingState.items = missing.map(m => ({ ...m, time: null })); // time will be fetched asynchronously
+  fillMissingState.show = true;
+  render(); // render will show modal and then we'll fetch times
+  // fetch median times for each type
+  missing.forEach(async (m, idx) => {
+    const median = await getMedianTimeForType(m.typeId);
+    let timeStr = '';
+    if (median) {
+      timeStr = fmtTimeFromHourMin(median.h, median.m);
+    } else {
+      // fallback to current time on that day
+      const now = new Date();
+      timeStr = fmtTimeFromHourMin(now.getHours(), now.getMinutes());
+    }
+    fillMissingState.items[idx].time = timeStr;
+    render();
+  });
+}
+
+async function addFillMissingItem(typeId, timeStr) {
+  const [h,m] = timeStr.split(':').map(Number);
+  const d = new Date(state.selDay + 'T12:00:00');
+  d.setHours(h, m, 0, 0);
+  const entry = {
+    id: uid(),
+    type: typeId,
+    ts: d.getTime(),
+    day: state.selDay,
+    details: '',
+    duration: null
+  };
+  await dbAdd(entry);
+  await refreshAll();
+}
+
+async function addAllFillMissing() {
+  for (let item of fillMissingState.items) {
+    if (item.selected && item.time) {
+      await addFillMissingItem(item.typeId, item.time);
+    }
+  }
+  fillMissingState.show = false;
+  await refreshAll();
+}
+
 // ── Render ───────────────────────────────────────────────────────────────
 function render() {
-  const {view, selDay, entries, allDays, showForm, formType, migraineIntensity, formDetails, formTime, formDuration, formMood, editingId} = state;
+  const {view, selDay, entries, allDays, showForm, formType, migraineIntensity, formDetails, formTime, formDuration, formMood, editingId, streak, dayNote} = state;
   const isToday = selDay === today();
   const cigs = entries.filter(e=>e.type==='cig').length;
   const joints = entries.filter(e=>e.type==='joint').length;
   const meals = entries.filter(e=>['breakfast','lunch','dinner'].includes(e.type)).length;
   const water = entries.filter(e=>e.type==='water').length;
 
+  // Mood summary dots
+  const moodEntries = entries.filter(e => e.mood && e.type !== 'migraine').map(e => ({ ts: e.ts, mood: e.mood }));
+  moodEntries.sort((a,b) => a.ts - b.ts);
+
   let html = `<div class="header">`;
-  html += `<div class="hdr-row">
-    <div class="tabs" style="flex:1;max-width:200px">
+  html += `<div class="top-row">
+    <div class="tabs">
       <button class="tab ${view==='log'?'active':''}" onclick="setState({view:'log'})">Log</button>
       <button class="tab ${view==='stats'?'active':''}" onclick="setState({view:'stats'})">Stats</button>
     </div>
-    <button class="export-btn" onclick="exportCSV()">Export CSV</button>
+    <div class="streak ${streak.current > 0 ? 'fire' : ''}">
+      <span>🔥 ${streak.current}</span>
+      <span class="best">best ${streak.best}</span>
+    </div>
+    <button class="export-btn" onclick="exportCSV()">CSV</button>
   </div>`;
   html += `<div class="daynav">
     <button onclick="switchDay(offsetDay('${selDay}',-1))">‹</button>
@@ -486,7 +676,22 @@ function render() {
   html += `</div>`;
 
   if (view === 'log') {
-    // Missing essentials bar – now uses hasEntryOrSkip so skipped items disappear
+    // End‑of‑day gentle reminder (after 8pm, today, missing essentials)
+    const now = new Date();
+    if (isToday && now.getHours() >= 20 && countMissingEssential(entries) > 0) {
+      html += `<div style="padding:8px 16px; background:rgba(239,68,68,0.2); margin-bottom:8px; border-radius:8px;">`;
+      html += `<div style="font-size:11px; color:var(--red); margin-bottom:6px;">🌙 It's late – missing some things:</div>`;
+      html += `<div style="display:flex; gap:6px; flex-wrap:wrap;">`;
+      ESSENTIAL_TYPES.forEach(typeId => {
+        if (!hasEntryOrSkip(entries, typeId)) {
+          const t = typeOf(typeId);
+          html += `<button class="gbtn small" onclick="quickLog('${typeId}')">${t.label}</button>`;
+        }
+      });
+      html += `</div></div>`;
+    }
+
+    // Missing essentials bar (now with Fill Missing button)
     const missingTypes = [];
     ESSENTIAL_TYPES.forEach(typeId => {
       if (!hasEntryOrSkip(entries, typeId)) {
@@ -502,8 +707,21 @@ function render() {
     });
     if (missingTypes.length > 0) {
       html += `<div style="padding:8px 16px; background:rgba(239,68,68,0.1); margin-bottom:8px; border-radius:8px;">`;
-      html += `<div style="font-size:11px; color:var(--red); margin-bottom:6px;">⚠️ Missing essentials — tap + to add, ✕ to skip</div>`;
+      html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">`;
+      html += `<span style="font-size:11px; color:var(--red);">⚠️ Missing essentials</span>`;
+      html += `<button class="gbtn small" onclick="openFillMissing()" style="padding:4px 10px;">✨ Fill missing</button>`;
+      html += `</div>`;
       html += `<div style="display:flex; gap:8px; flex-wrap:wrap;">${missingTypes.join('')}</div>`;
+      html += `</div>`;
+    }
+
+    // Mood summary dots (simple)
+    if (moodEntries.length > 0) {
+      html += `<div class="mood-summary" style="padding:0 16px; margin-bottom:8px;">`;
+      moodEntries.forEach(e => {
+        const color = e.mood <= 2 ? '#ef4444' : e.mood >= 4 ? '#22c55e' : '#f59e0b';
+        html += `<div class="mood-dot" style="background:${color};">${e.mood}</div>`;
+      });
       html += `</div>`;
     }
 
@@ -538,6 +756,13 @@ function render() {
       });
     }
     html += `</div>`;
+
+    // Day note section
+    html += `<div class="day-note">
+      <label style="font-size:12px; color:var(--dim); margin-bottom:4px; display:block;">Daily summary (optional)</label>
+      <textarea placeholder="How was your day? ..." oninput="state.dayNote=this.value">${esc(dayNote)}</textarea>
+      <button onclick="saveDayNote()">Save note</button>
+    </div>`;
   } else {
     html += `<div class="statslist"><div class="tlabel" style="padding:0 0 8px">Recent Days</div>`;
     const showDays = allDays.slice(0, 30);
@@ -568,7 +793,7 @@ function render() {
     html += `</div>`;
   }
 
-  // Modal
+  // Modal for form
   if (showForm && formType) {
     const t = typeOf(formType);
     const needsMood = MOOD_TYPES.has(formType) && formType !== 'migraine';
@@ -626,6 +851,30 @@ function render() {
     </div></div>`;
   }
 
+  // Modal for fill missing
+  if (fillMissingState.show) {
+    html += `<div class="modal-bg" onclick="if(event.target===this){fillMissingState.show=false;render()}">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="title">Fill missing entries</span>
+        <button onclick="fillMissingState.show=false;render()">×</button>
+      </div>`;
+    fillMissingState.items.forEach((item, idx) => {
+      const t = typeOf(item.typeId);
+      const timeVal = item.time || '--:--';
+      html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; background:var(--card2); padding:8px; border-radius:8px;">
+        <input type="checkbox" ${item.selected ? 'checked' : ''} onchange="fillMissingState.items[${idx}].selected = this.checked">
+        <span style="flex:1; color:${t.color}">${t.label}</span>
+        <input type="time" value="${timeVal}" onchange="fillMissingState.items[${idx}].time = this.value" style="width:100px; padding:4px; background:var(--card); border:1px solid #333; border-radius:6px; color:#fff">
+      </div>`;
+    });
+    html += `<div style="display:flex; gap:8px; margin-top:16px;">
+      <button class="submit" style="background:var(--blue); flex:1;" onclick="addAllFillMissing()">Add selected</button>
+      <button class="submit" style="background:var(--dim); flex:1;" onclick="fillMissingState.show=false;render()">Cancel</button>
+    </div>`;
+    html += `</div></div>`;
+  }
+
   document.getElementById('app').innerHTML = html;
 
   if (showForm) {
@@ -648,8 +897,8 @@ async function logSkipped(typeId) {
     id: uid(),
     type: 'note',
     ts: targetDate.getTime(),
-    day: targetDay,                      // use the day you're viewing
-    details: `skipped: ${typeId}`,        // store the type ID
+    day: targetDay,
+    details: `skipped: ${typeId}`,
     duration: null
   };
   await dbAdd(entry);
