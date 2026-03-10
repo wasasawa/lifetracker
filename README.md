@@ -1,9 +1,6 @@
 # Life Tracker
 
-A life tracker web app vibe coded with claude (idk how to do web shit). Easily document what's been done during the day + mood throughout the activities. Data is to be exported to csv for analysis (locally for obvious security reasons) using:
-
-1. Normal analysis 
-2. ML algorithms for complex pattern detection (Random forest for "causes" of mood, Decision tree for complex correlations between multiple factors) 
+A life tracker web app vibe coded with claude (idk how to do web shit). Easily document what's been done during the day + mood throughout the activities. Data is to be exported to csv for analysis (locally for obvious security reasons) 
 
 
 ## Privacy
