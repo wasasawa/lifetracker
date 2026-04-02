@@ -2,10 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#050505">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon-192.png">
 <title>Life Tracker</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
@@ -16,7 +18,7 @@
   --red:#ef4444;--green:#22c55e;--amber:#f59e0b;--blue:#3b82f6;
   --purple:#8b5cf6;--pink:#ec4899;--orange:#f97316;--teal:#14b8a6;
   --radius:14px;--radius-sm:10px;
-  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-b:12px;
 }
 html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text',system-ui,sans-serif;overflow-x:hidden;font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
 body{max-width:500px;margin:0 auto}
@@ -24,7 +26,7 @@ input,button,select,textarea{font-family:inherit;-webkit-user-select:text;user-s
 textarea{-webkit-user-select:text;user-select:text}
 
 /* ── Header ──────────────────────────────── */
-.hdr{position:sticky;top:0;z-index:50;background:var(--bg);padding:max(10px,env(safe-area-inset-top)) 16px 0}
+.hdr{position:sticky;top:0;z-index:50;background:var(--bg);padding:10px 16px 0}
 .hdr-top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .tabs{display:flex;background:var(--card2);border-radius:var(--radius-sm);padding:3px;flex:1}
 .tab{flex:1;padding:8px 0;border:none;border-radius:8px;background:transparent;color:var(--dim);font-size:12px;font-weight:700;cursor:pointer;text-align:center;letter-spacing:.3px;transition:all .2s}
@@ -160,7 +162,7 @@ textarea{-webkit-user-select:text;user-select:text}
 .batch-overlay{position:fixed;inset:0;z-index:55;background:rgba(0,0,0,.5)}
 
 /* ── Toast ────────────────────────────────── */
-.toast{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%) translateY(-100px);z-index:80;background:var(--card2);border:1px solid var(--border2);border-radius:var(--radius);padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;transition:transform .3s cubic-bezier(.4,0,.2,1);white-space:nowrap}
+.toast{position:fixed;top:12px;left:50%;transform:translateX(-50%) translateY(-100px);z-index:80;background:var(--card2);border:1px solid var(--border2);border-radius:var(--radius);padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;transition:transform .3s cubic-bezier(.4,0,.2,1);white-space:nowrap}
 .toast.show{transform:translateX(-50%) translateY(0)}
 .toast button{padding:4px 12px;border-radius:6px;border:none;background:var(--red);color:#fff;font-size:12px;font-weight:700;cursor:pointer}
 
@@ -339,7 +341,7 @@ function dbGetAllDays(){return new Promise((ok,no)=>{const tx=db.transaction('en
 // ═══════════════════════════════════════════
 // TARGETS (localStorage)
 // ═══════════════════════════════════════════
-const DEF_TARGETS={cigLimit:10,jointLimit:5,alcoholLimit:3,waterTarget:8,wakeupTarget:'08:00',getupTarget:'08:30',bedtimeTarget:'23:00',mealsTarget:2,includeBreakfast:false};
+const DEF_TARGETS={cigLimit:10,jointLimit:5,alcoholLimit:3,waterTarget:8,wakeupTarget:'08:00',getupTarget:'08:30',bedtimeTarget:'23:00',mealsTarget:2,includeBreakfast:false,goalReminder1:'09:00',goalReminder2:'20:00',dailyLogReminder:'21:00',ntfyTopic:'',ntfyEnabled:false};
 function loadTargets(){try{const s=localStorage.getItem('lt_targets');return s?{...DEF_TARGETS,...JSON.parse(s)}:{...DEF_TARGETS};}catch(e){return{...DEF_TARGETS};}}
 function saveTargets(t){localStorage.setItem('lt_targets',JSON.stringify(t));}
 
@@ -582,18 +584,19 @@ async function setActiveGoal(goalId){
   const g=goals.find(x=>x.id===goalId);
   if(g){g.status='active';g.activatedAt=Date.now();await dbPut('goals',g);saveActiveGoal(g);}
   await refreshAll();
+  syncNotifications();
 }
 async function completeGoal(goalId){
   const goals=await dbGetAll('goals');
   const g=goals.find(x=>x.id===goalId);
   if(g){g.status='completed';g.completedAt=Date.now();await dbPut('goals',g);
     if(S.activeGoal&&S.activeGoal.id===goalId)saveActiveGoal(null);S.activeGoal=null;}
-  await refreshAll();
+  await refreshAll();syncNotifications();
 }
 async function deleteGoal(goalId){
   await dbDel('goals',goalId);
   if(S.activeGoal&&S.activeGoal.id===goalId){saveActiveGoal(null);S.activeGoal=null;}
-  await refreshAll();
+  await refreshAll();syncNotifications();
 }
 
 // Export CSV (same format!)
@@ -609,8 +612,207 @@ async function exportCSV(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='life_tracker_export.csv';a.click();
 }
 
+// Import CSV
+// Build reverse map: display name → type id
+const TYPE_NAME_MAP = {};
+TYPES.forEach(t => {
+  const name = t.label.replace(/^[^\w\s]+\s/, '').toLowerCase().trim();
+  TYPE_NAME_MAP[name] = t.id;
+});
+// Also add common aliases
+TYPE_NAME_MAP['cig'] = 'cig';
+TYPE_NAME_MAP['cigarette'] = 'cig';
+TYPE_NAME_MAP['wake up'] = 'wakeup';
+TYPE_NAME_MAP['get up'] = 'getup';
+TYPE_NAME_MAP['mood check'] = 'mood';
+TYPE_NAME_MAP['work/study'] = 'work';
+
+async function importCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const text = await file.text();
+  input.value = ''; // reset so same file can be re-imported
+  
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) { alert('CSV is empty or has no data rows.'); return; }
+  
+  // Detect header
+  const hdr = lines[0].toLowerCase();
+  const hasHeader = hdr.includes('date') || hdr.includes('type') || hdr.includes('time');
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+  
+  // Load existing entries for dedup
+  const existing = await dbGetAll('entries');
+  const existingKeys = new Set(existing.map(e => `${e.day}_${fmtTime(e.ts)}_${e.type}`));
+  
+  let imported = 0, skipped = 0, errors = 0;
+  
+  for (const line of dataLines) {
+    try {
+      // Parse semicolon-separated, handling quoted fields
+      const fields = parseCSVLine(line, ';');
+      if (fields.length < 3) { errors++; continue; }
+      
+      const [dateStr, timeStr, typeName, ...rest] = fields;
+      
+      // Parse date: DD/MM/YYYY
+      const dateParts = dateStr.trim().split('/');
+      if (dateParts.length !== 3) { errors++; continue; }
+      const [dd, mm, yyyy] = dateParts.map(Number);
+      
+      // Parse time: HH:MM
+      const timeParts = timeStr.trim().split(':');
+      if (timeParts.length < 2) { errors++; continue; }
+      const [hh, mi] = timeParts.map(Number);
+      
+      // Resolve type
+      const typeKey = typeName.replace(/"/g, '').trim().toLowerCase();
+      const typeId = TYPE_NAME_MAP[typeKey];
+      if (!typeId) { errors++; continue; }
+      
+      // Build timestamp
+      const d = new Date(yyyy, mm - 1, dd, hh, mi, 0, 0);
+      if (isNaN(d.getTime())) { errors++; continue; }
+      const day = getDayFromDate(d);
+      const ts = d.getTime();
+      
+      // Dedup check
+      const key = `${day}_${pad(hh)}:${pad(mi)}_${typeId}`;
+      if (existingKeys.has(key)) { skipped++; continue; }
+      
+      // Parse optional fields
+      const details = (rest[0] || '').replace(/^"|"$/g, '').replace(/""/g, '"').trim();
+      const duration = rest[1] ? parseInt(rest[1]) || null : null;
+      const mood = rest[2] ? parseInt(rest[2]) || null : null;
+      const energy = rest[3] ? parseInt(rest[3]) || null : null;
+      const stress = rest[4] ? parseInt(rest[4]) || null : null;
+      const irritability = rest[5] ? parseInt(rest[5]) || null : null;
+      const rumination = rest[6] ? parseInt(rest[6]) || null : null;
+      
+      const entry = { id: uid(), type: typeId, ts, day, details: details || '', duration };
+      if (mood) entry.mood = mood;
+      if (energy) entry.energy = energy;
+      if (stress) entry.stress = stress;
+      if (irritability) entry.irritability = irritability;
+      if (rumination) entry.rumination = rumination;
+      
+      await dbPut('entries', entry);
+      existingKeys.add(key);
+      imported++;
+    } catch (e) {
+      errors++;
+    }
+  }
+  
+  await refreshAll();
+  alert(`Import done!\n✓ ${imported} entries added\n⏭ ${skipped} duplicates skipped${errors ? `\n⚠ ${errors} rows had errors` : ''}`);
+}
+
+// Parse a CSV line respecting quoted fields
+function parseCSVLine(line, sep) {
+  const fields = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') { current += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { current += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === sep) { fields.push(current); current = ''; }
+      else { current += ch; }
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
 // Settings
 function updateTarget(key,val){const t={...S.targets,[key]:val};saveTargets(t);setState({targets:t});}
+
+// ═══════════════════════════════════════════
+// NTFY.SH NOTIFICATIONS
+// ═══════════════════════════════════════════
+// Schedules notifications for the next 3 days via ntfy.sh
+// User subscribes to their topic in the ntfy iOS app
+
+async function syncNotifications(){
+  const t=S.targets;
+  if(!t.ntfyTopic||!t.ntfyEnabled)return;
+  const topic=t.ntfyTopic.trim();
+  if(!topic)return;
+  
+  try{
+    // Collect all reminder times and their messages
+    const reminders=[];
+    const ag=S.activeGoal;
+    if(ag&&ag.status==='active'){
+      if(t.goalReminder1)reminders.push({time:t.goalReminder1,title:'🎯 Weekly Goal',msg:ag.text,tag:'goal1'});
+      if(t.goalReminder2)reminders.push({time:t.goalReminder2,title:'🎯 Weekly Goal',msg:ag.text,tag:'goal2'});
+    }
+    if(t.dailyLogReminder)reminders.push({time:t.dailyLogReminder,title:'📊 Life Tracker',msg:"Don't forget to log your day!",tag:'daily'});
+    
+    // Schedule for next 3 days
+    const now=new Date();
+    for(const rem of reminders){
+      const[rh,rm]=rem.time.split(':').map(Number);
+      for(let d=0;d<3;d++){
+        const target=new Date(now);
+        target.setDate(target.getDate()+d);
+        target.setHours(rh,rm,0,0);
+        // Skip if in the past
+        if(target<=now)continue;
+        const unixTs=Math.floor(target.getTime()/1000);
+        // Fire and forget — ntfy deduplicates by tag+timestamp
+        fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`,{
+          method:'POST',
+          headers:{
+            'Title':rem.title,
+            'Tags':rem.tag,
+            'At':String(unixTs),
+            'Priority':'3',
+          },
+          body:rem.msg
+        }).catch(()=>{});
+      }
+    }
+    // Store last sync time
+    localStorage.setItem('lt_lastNtfySync',Date.now().toString());
+  }catch(e){console.warn('ntfy sync failed:',e);}
+}
+
+async function testNotification(){
+  const topic=S.targets.ntfyTopic?.trim();
+  if(!topic){alert('Set a topic name first!');return;}
+  try{
+    const res=await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`,{
+      method:'POST',
+      headers:{'Title':'🎯 Life Tracker','Priority':'3'},
+      body:'Test notification — it works! 🎉'
+    });
+    if(res.ok)alert('Sent! Check the ntfy app on your phone.');
+    else alert('Error: '+res.status+'. Check your topic name.');
+  }catch(e){alert('Network error. Are you online?');}
+}
+
+function getNtfySyncStatus(){
+  const last=localStorage.getItem('lt_lastNtfySync');
+  if(!last)return 'Never synced';
+  const ago=Date.now()-parseInt(last);
+  if(ago<60000)return 'Synced just now';
+  if(ago<3600000)return `Synced ${Math.floor(ago/60000)}m ago`;
+  if(ago<86400000)return `Synced ${Math.floor(ago/3600000)}h ago`;
+  return `Synced ${Math.floor(ago/86400000)}d ago — open app to refresh`;
+}
+
+// Auto-sync on app open
+function autoSyncNotifications(){
+  const last=parseInt(localStorage.getItem('lt_lastNtfySync')||'0');
+  // Re-sync if last sync was >12h ago
+  if(Date.now()-last>12*3600000)syncNotifications();
+}
 
 // ═══════════════════════════════════════════
 // SWIPE NAVIGATION
@@ -850,11 +1052,26 @@ function render(){
       <div class="s-row"><span class="s-label">Meals target</span><input type="number" class="s-input" value="${targets.mealsTarget}" min="0" max="3" onchange="updateTarget('mealsTarget',+this.value||0)"></div>
       <div class="s-row"><span class="s-label">Include breakfast</span><input type="checkbox" ${targets.includeBreakfast?'checked':''} onchange="updateTarget('includeBreakfast',this.checked)" style="width:20px;height:20px"></div>
     </div>
-    <div class="s-section"><div class="s-title">Goal Reminders</div>
-      <div style="font-size:12px;color:var(--muted);padding:8px 0">Notification scheduling requires the native iOS app wrapper. Use Xcode to build the Swift shell for background notifications.</div>
+    <div class="s-section"><div class="s-title">Notifications (via ntfy.sh)</div>
+      <div class="s-hint" style="margin-bottom:10px">Install the <b>ntfy</b> app on your iPhone, subscribe to your topic below, and get reminders for your goals.</div>
+      <div class="s-row"><span class="s-label">ntfy topic</span><input type="text" class="s-input" style="width:160px;text-align:left" placeholder="my-secret-topic" value="${targets.ntfyTopic||''}" oninput="updateTarget('ntfyTopic',this.value)"></div>
+      <div class="s-hint">Pick something private like <code style="color:var(--text2)">lt-wajih-${Math.random().toString(36).slice(2,6)}</code></div>
+      <div class="s-row"><span class="s-label">Enable reminders</span><input type="checkbox" ${targets.ntfyEnabled?'checked':''} onchange="updateTarget('ntfyEnabled',this.checked);if(this.checked)syncNotifications()" style="width:20px;height:20px"></div>
+      <div class="s-row"><span class="s-label">Goal reminder 1</span><input type="time" class="s-input s-input-time" value="${targets.goalReminder1||'09:00'}" onchange="updateTarget('goalReminder1',this.value);syncNotifications()"></div>
+      <div class="s-row"><span class="s-label">Goal reminder 2</span><input type="time" class="s-input s-input-time" value="${targets.goalReminder2||'20:00'}" onchange="updateTarget('goalReminder2',this.value);syncNotifications()"></div>
+      <div class="s-row"><span class="s-label">Daily log reminder</span><input type="time" class="s-input s-input-time" value="${targets.dailyLogReminder||'21:00'}" onchange="updateTarget('dailyLogReminder',this.value);syncNotifications()"></div>
+      <div class="s-row"><span class="s-label">Status</span><span style="font-size:12px;color:var(--muted)">${getNtfySyncStatus()}</span></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="s-btn" style="background:var(--blue);color:#fff;flex:1" onclick="syncNotifications().then(()=>render())">Sync now</button>
+        <button class="s-btn" style="background:var(--card2);color:var(--muted);border:1px solid var(--border2);flex:1" onclick="testNotification()">Test</button>
+      </div>
+      <div class="s-hint" style="margin-top:8px">Opens app → reminders auto-refresh for next 3 days. Sync manually if you change times.</div>
     </div>
     <div class="s-section"><div class="s-title">Data</div>
       <button class="s-btn" style="background:var(--blue);color:#fff;margin-bottom:8px" onclick="exportCSV()">Export CSV</button>
+      <button class="s-btn" style="background:var(--green);color:#fff;margin-bottom:8px" onclick="document.getElementById('csv-import').click()">Import CSV</button>
+      <input type="file" id="csv-import" accept=".csv" style="display:none" onchange="importCSV(this)">
+      <div class="s-hint">Import merges new entries. Duplicates (same date+time+type) are skipped.</div>
       <button class="s-btn" style="background:var(--card2);color:var(--muted);border:1px solid var(--border2)" onclick="if(confirm('Reset all targets to defaults?')){saveTargets({...DEF_TARGETS});setState({targets:{...DEF_TARGETS}})}">Reset targets</button>
     </div>
     </div>`;
@@ -933,6 +1150,8 @@ function render(){
   // Focus details on form open
   if(S.showForm){const el=document.getElementById('f-det');if(el)setTimeout(()=>el.focus(),100);}
 
+  // (ntfy status is rendered inline, no async check needed)
+
   // Load cache for stats view
   if(view==='stats'){allDays.slice(0,30).forEach(d=>{if(!S.cache[d])dbGetDay(d).then(entries=>{S.cache[d]=entries;render();});});}
 }
@@ -1004,6 +1223,11 @@ function renderScales(){
   try{
     await openDB();
     await refreshAll();
+    autoSyncNotifications();
+    // Register service worker for PWA
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    }
   }catch(e){
     document.getElementById('app').innerHTML=`<div style="padding:24px;color:var(--red)">
       <h2>Database Error</h2>
